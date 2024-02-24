@@ -1,0 +1,29 @@
+# Ignore build files except the assembly file itself
+gateway.*
+!gateway.asm
+diagnose.*
+!diagnose.asm
+interface.*
+!interface.asm
+
+selfprog.*
+!selfprog.asm
+
+ds1820.*
+!ds1820.asm
+
+build.asm
+
+# Ignore test-suite build files
+# Ignore all files in chmodule folder except manager.cc
+chmodule/*
+!chmodule/Makefile.am
+!chmodule/autogen.sh
+!chmodule/configure.ac
+!chmodule/manager.cc
+!chmodule/opentherm.cc
+!chmodule/opentherm.h
+!chmodule/probe.cc
+!chmodule/probe.h
+
+
