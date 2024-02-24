@@ -364,6 +364,9 @@ requestcode	res	1
 operatingmode1	res	1
 operatingmode2	res	1
 #define		manualdhwpush	operatingmode1,4;Manual DHW push requested
+ithohwtime1	res 1
+ithohwtime2 res	1
+#define IhwInvalidTime ithohwtime1,7
 minutetimer	res	1
 #define		Expired		minutetimer,7
 fakesetpoint1	res	1
@@ -3663,7 +3666,7 @@ SerialCmdTable	goto	SerialCmd00	; AA, MM, RR, TT commands
 		goto	SerialCmd15	; BW command
 		retlw	CommandNG
 		goto	SerialCmd17	; TC command
-		retlw	CommandNG
+		goto	SerialCmd18 ; QI command (Itho-wpu5g-DHW-Time)
 		retlw	CommandNG
 		goto	SerialCmd1A	; MW command
 		goto	SerialCmd1B	; OT, SH commands
@@ -3811,6 +3814,12 @@ SerialCmd17	movfw	INDF1
 		skpnz
 		goto	SetContSetPoint
 		retlw	CommandNG
+
+SerialCmd18 movfw	INDF1
+		xorlw	'Q'
+		skpnz
+		goto	SetIHWTime
+        retlw	CommandNG
 
 SerialCmd1A	movfw	INDF1
 		xorlw	'M'
@@ -4632,6 +4641,42 @@ SetMaxModLevel	call	GetDecimalArg	;Get the modulation level
 		lgoto	PrintByte
 ClrMaxModLevel	bsf	SysMaxModLevel
 		goto	ValueCleared
+
+; QI=22:15 (Serial.tx="QI=22:15\r")
+SetIHWTime	call	GetDecimalArg	;Get the hours
+		skpnc					;Check
+		return					;Return
+		movwf	ithohwtime1		;Store hours in variable ithohwtime1
+		sublw	23				;Calc (ithohwtime1 - 23)
+		skpc					;Check
+		retlw	OutOfRange		;Value must be in the range 0-23
+		
+		moviw	FSR1++			;Move rxpointer
+		sublw	':'				;Calc (rxpointer - ':')
+		skpz					;Check
+		retlw	SyntaxError		;Seperator should be ':'
+		
+		call	GetDecimal		;Get the minutes
+		skpnc					;Check
+		retlw	SyntaxError 	;Invalid decimal
+		movwf   ithohwtime2 	;Store minutes in variable ithohwtime2
+		sublw	59				;Calc (ithohwtime2 - 59)
+		skpc					;Check
+		retlw	OutOfRange		;Value must be in the range 0-59
+		
+		;Call the actual action
+		
+		movfw	ithohwtime1		;Load ithohwtime1
+		andlw	b'11111'		;Mask msb 3 bits (MSB is used for flag IhwInvalidTime)
+		movwf	temp			;Move masked ithohwtime1 to temp
+		lcall	PrintDecimal	;Print with leading 0
+		movlw	':'				;Load constant ':'
+		call	PrintChar		;Print ':'
+		movfw	ithohwtime2		;Load ithohwtime2
+		movwf	temp			;Move ithohwtime2 to temp
+		goto	PrintDecimal	;Print with leading 0
+		
+		return
 
 ReportSetting	lgoto	PrintSetting
 
