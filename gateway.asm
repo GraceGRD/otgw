@@ -4675,8 +4675,6 @@ SetIHWTime	call	GetDecimalArg	;Get the hours
 		movfw	ithohwtime2		;Load ithohwtime2
 		movwf	temp			;Move ithohwtime2 to temp
 		goto	PrintDecimal	;Print with leading 0
-		
-		return
 
 ReportSetting	lgoto	PrintSetting
 
