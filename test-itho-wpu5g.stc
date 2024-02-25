@@ -1,0 +1,7 @@
+load i tests/setup.stc
+load i tests/boiler-itho-wpu5g.stc
+load i tests/thermostat-itho-wpu5g.stc
+
+break c 2000000
+
+run
