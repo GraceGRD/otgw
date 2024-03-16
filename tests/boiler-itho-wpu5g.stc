@@ -1,4 +1,4 @@
 # Set up some standard responses from the boiler
 Boiler.response = 0x4000020C
-Boiler.response = 0xC085B305
-Boiler.response = 0x5085B305
+Boiler.response = 0x40850000
+Boiler.response = 0x50850001

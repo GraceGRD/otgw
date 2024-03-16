@@ -366,7 +366,9 @@ operatingmode2	res	1
 #define		manualdhwpush	operatingmode1,4;Manual DHW push requested
 ithohwtime1	res 1
 ithohwtime2 res	1
-#define IhwInvalidTime ithohwtime1,7
+#define IhwOverrideToBoiler 	ithohwtime1,5
+#define IhwOverrideToThermostat ithohwtime1,6
+#define IhwInvalidTime 			ithohwtime1,7
 minutetimer	res	1
 #define		Expired		minutetimer,7
 fakesetpoint1	res	1
@@ -3273,7 +3275,37 @@ MessageID126	btfss	MsgResponse	;Only interested in requests
 		return
 
 VendorMessageID130	goto	WordResponse	;TODO: ID 130
-VendorMessageID133	goto	WordResponse	;TODO: ID 133
+
+; MessageID133 is used to set the DHW time on the boiler used in ECO mode.
+; Patch Thermostat Read-Data to Write-Data with custom timestamp and send this to the boiler.
+; Patch Boiler Write-Ack to Read-Ack and send this to the thermostat.
+VendorMessageID133
+		btfsc			IhwOverrideToBoiler		;Pending request?
+		goto 			IhwWriteToBoiler
+		btfsc			IhwOverrideToThermostat	;Pending response?
+		goto 			IhwWriteToThermostat
+		return									;No override conditions met, continue
+
+IhwWriteToBoiler
+        btfsc			MsgResponse				;Only interested in requests
+		return
+    	movlw 			T_WRITE					;Turn request into Thermostat (Write-Data)
+		call			setbyte1
+		movfw			ithohwtime1				;Hours (bit 5-0)
+		andlw			b'00011111'
+		addlw			b'10100000'				;Add leading 0b101 TODO: Spider uses this... test if this is actually neeeded?
+		call			setbyte3 
+		movfw			ithohwtime2				;Minutes
+		call			setbyte4
+		bcf				IhwOverrideToBoiler		;Clear update time on next message flag
+		bsf				IhwOverrideToThermostat	;Set response flag
+
+IhwWriteToThermostat
+        btfss			MsgResponse				;Only interested in responses
+		return
+		movlw			B_RACK					;Turn request into Boiler (Read-Ack)
+		call			setbyte1
+		bcf				IhwOverrideToBoiler		;Clear update time on next message flag
 
 ;Messages to read transparent slave parameters (TSPs) and fault history buffer
 ;(FHB) entries.
@@ -4677,7 +4709,7 @@ SetIHWTime	call	GetDecimalArg	;Get the hours
 		skpc					;Check
 		retlw	OutOfRange		;Value must be in the range 0-59
 		
-		;Call the actual action
+		bsf	IhwOverrideToBoiler ;Update time on next message
 		
 		movfw	ithohwtime1		;Load ithohwtime1
 		andlw	b'11111'		;Mask msb 3 bits (MSB is used for flag IhwInvalidTime)
