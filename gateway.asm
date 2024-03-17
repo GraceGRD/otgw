@@ -3299,13 +3299,15 @@ IhwWriteToBoiler
 		call			setbyte4
 		bcf				IhwOverrideToBoiler		;Clear update time on next message flag
 		bsf				IhwOverrideToThermostat	;Set response flag
+		return
 
 IhwWriteToThermostat
         btfss			MsgResponse				;Only interested in responses
 		return
 		movlw			B_RACK					;Turn request into Boiler (Read-Ack)
 		call			setbyte1
-		bcf				IhwOverrideToBoiler		;Clear update time on next message flag
+		bcf				IhwOverrideToThermostat ;Clear update time on next message flag
+		return
 
 ;Messages to read transparent slave parameters (TSPs) and fault history buffer
 ;(FHB) entries.
