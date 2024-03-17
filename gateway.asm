@@ -3280,33 +3280,41 @@ VendorMessageID130	goto	WordResponse	;TODO: ID 130
 ; Patch Thermostat Read-Data to Write-Data with custom timestamp and send this to the boiler.
 ; Patch Boiler Write-Ack to Read-Ack and send this to the thermostat.
 VendorMessageID133
-		btfsc			IhwOverrideToBoiler		;Pending request?
-		goto 			IhwWriteToBoiler
-		btfsc			IhwOverrideToThermostat	;Pending response?
-		goto 			IhwWriteToThermostat
-		return									;No override conditions met, continue
+        btfsc           IhwOverrideToBoiler     ;Handle pending request
+        goto            IhwWriteToBoiler
+        btfsc           IhwOverrideToThermostat ;Handle pending response
+        goto            IhwWriteToThermostat
+        return                                  ;Normal response
 
 IhwWriteToBoiler
-        btfsc			MsgResponse				;Only interested in requests
+        btfsc           MsgResponse             ;Only interested in requests (Validate request bythermostat?)
 		return
-    	movlw 			T_WRITE					;Turn request into Thermostat (Write-Data)
-		call			setbyte1
-		movfw			ithohwtime1				;Hours (bit 5-0)
-		andlw			b'00011111'
-		addlw			b'10100000'				;Add leading 0b101 TODO: Spider uses this... test if this is actually neeeded?
-		call			setbyte3 
-		movfw			ithohwtime2				;Minutes
-		call			setbyte4
-		bcf				IhwOverrideToBoiler		;Clear update time on next message flag
-		bsf				IhwOverrideToThermostat	;Set response flag
+        movlw           T_WRITE                 ;Turn thermostat request into (Write-Data) with our custom time
+        call            setbyte1
+        movfw           ithohwtime1             ;Hours (bit 5-0)
+        andlw           b'00011111'
+        addlw           b'10100000'             ;Leading bit 0b101 are unknown, copied over rom Spider
+        call            setbyte3 
+        movfw           ithohwtime2             ;Minutes
+        call            setbyte4
+        bcf             IhwOverrideToBoiler     ;Clear update time on next message flag
+        bsf             IhwOverrideToThermostat ;Set response flag
 		return
 
 IhwWriteToThermostat
-        btfss			MsgResponse				;Only interested in responses
+        btfss           MsgResponse             ;Only interested in responses
 		return
-		movlw			B_RACK					;Turn request into Boiler (Read-Ack)
-		call			setbyte1
-		bcf				IhwOverrideToThermostat ;Clear update time on next message flag
+        btfsc           BoilerResponse          ;Only interested in boiler responses
+        return
+        movlw           B_RACK                  ;Turn boiler response into (Read-Ack) with our custom time
+        call            setbyte1
+        movfw           ithohwtime1             ;Hours (bit 5-0)
+        andlw           b'00011111'
+        addlw           b'10100000'             ;Leading bit 0b101 are unknown, copied over rom Spider
+        call            setbyte3 
+        movfw           ithohwtime2             ;Minutes
+        call            setbyte4
+        bcf             IhwOverrideToThermostat ;Clear update time on next message flag
 		return
 
 ;Messages to read transparent slave parameters (TSPs) and fault history buffer
