@@ -364,6 +364,12 @@ requestcode	res	1
 operatingmode1	res	1
 operatingmode2	res	1
 #define		manualdhwpush	operatingmode1,4;Manual DHW push requested
+ithohwmode1	res	1
+;ithohwmode2	res	1
+#define IhwCommandCycle	  ithohwmode1,0
+#define IhwCommandBlock   ithohwmode1,2
+#define IhwCommandStandby ithohwmode1,3
+
 ithohwtime1	res 1
 ithohwtime2 res	1
 #define IhwOverrideToBoiler 	ithohwtime1,5
@@ -3274,7 +3280,30 @@ MessageID126	btfss	MsgResponse	;Only interested in requests
 		bsf	TStatISense	;At least 30 and 32 are iSenses
 		return
 
-VendorMessageID130	goto	WordResponse	;TODO: ID 130
+VendorMessageID130	;goto	WordResponse	;TODO: ID 130
+		call   			IhwModeToBoiler
+		call			IhwModeToThermostat    
+		return    
+
+IhwModeToBoiler
+		btfsc           MsgResponse		 ;Only interested in requests
+		return
+		movfw		    ithohwmode1		 ;MSB
+		call		    setbyte3
+		;movfw		    ithohwmode2		 ;LSB (0x00)
+		movlw		    0x00
+		call		    setbyte4
+		return
+
+IhwModeToThermostat
+		btfss           MsgResponse             ;Only interested in responses
+        return
+        btfss           BoilerResponse          ;Only interested in boiler responses
+        return
+		movfw           ithohwmode1             ;MSB
+		call            setbyte3
+		return
+
 
 ; MessageID133 is used to set the DHW time on the boiler used in ECO mode.
 ; Patch Thermostat Read-Data to Write-Data with custom timestamp and send this to the boiler.
@@ -3722,7 +3751,7 @@ SerialCmdTable	goto	SerialCmd00	; AA, MM, RR, TT commands
 		retlw	CommandNG
 		goto	SerialCmd17	; TC command
 		goto	SerialCmd18 ; QI command (Itho-wpu5g-DHW-Time)
-		retlw	CommandNG
+		goto	SerialCmd19 ; QH command (Itho-wpu5g-DHW-Mode)
 		goto	SerialCmd1A	; MW command
 		goto	SerialCmd1B	; OT, SH commands
 		goto	SerialCmd1C	; UI command
@@ -3874,6 +3903,12 @@ SerialCmd18 movfw	INDF1
 		xorlw	'Q'
 		skpnz
 		goto	SetIHWTime
+        retlw	CommandNG
+
+SerialCmd19 movfw	INDF1
+		xorlw	'Q'
+		skpnz
+		goto	SetIHWMode
         retlw	CommandNG
 
 SerialCmd1A	movfw	INDF1
@@ -4697,8 +4732,41 @@ SetMaxModLevel	call	GetDecimalArg	;Get the modulation level
 ClrMaxModLevel	bsf	SysMaxModLevel
 		goto	ValueCleared
 
+; QH=C (Serial.tx="QH=C\r") (DHW cycle)
+; QH=B (Serial.tx="QH=B\r")	(DHW block)
+; QH=S (Serial.tx="QH=S\r")	(DHW standby)
+SetIHWMode
+		movfw 	rxpointer		;Validate the command length
+		sublw	4
+		skpz
+		retlw	SyntaxError
+		clrf 	ithohwmode1		;Clear the mode register
+		moviw	3[FSR1]			;Move rxpointer to the command argument
+		sublw	'C'				;Check for command DHW cycle
+		skpnz
+		bsf		IhwCommandCycle
+		moviw	3[FSR1]			;Move rxpointer to the command argument
+		sublw	'B'				;Check for command DHW block
+		skpnz
+		bsf		IhwCommandBlock
+		moviw	3[FSR1]			;Move rxpointer to the command argument
+		sublw	'S'				;Check for command DHW standby
+		skpnz
+		bsf		IhwCommandStandby
+		; Print IhwMode
+		movlw	'0'
+		btfsc	IhwCommandCycle
+		movlw	'C'
+		btfsc	IhwCommandBlock
+		movlw	'B'
+		btfsc	IhwCommandStandby
+		movlw	'S'
+		lgoto	PrintChar
+
+
 ; QI=22:15 (Serial.tx="QI=22:15\r")
-SetIHWTime	call	GetDecimalArg	;Get the hours
+SetIHWTime	
+		call	GetDecimalArg	;Get the hours
 		skpnc					;Check
 		return					;Return
 		movwf	ithohwtime1		;Store hours in variable ithohwtime1
