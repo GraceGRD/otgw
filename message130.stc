@@ -1,0 +1,17 @@
+load i tests/setup.stc
+load i tests/boiler.stc
+load i tests/thermostat.stc
+
+Thermostat.tx = 0x00820000
+Boiler.response = 0x4082000D
+
+break c 2000000
+break c 10000000
+go
+
+Serial.tx="QH=C\r"
+
+break e 0x034f	# VendorMessageID130
+go
+
+break e 0x003a	# HandleResponse

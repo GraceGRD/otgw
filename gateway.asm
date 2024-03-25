@@ -367,8 +367,13 @@ operatingmode2	res	1
 ithohwmode1	res	1
 ;ithohwmode2	res	1
 #define IhwCommandCycle	  ithohwmode1,0
+#define IhwCommandReserve ithohwmode1,1
 #define IhwCommandBlock   ithohwmode1,2
 #define IhwCommandStandby ithohwmode1,3
+#define IhwCommandCycleActiated ithohwmode1,4
+#define IhwCommandReserveActiated ithohwmode1,5
+#define IhwCommandBlockActiated   ithohwmode1,6
+#define IhwCommandStandbyActiated ithohwmode1,7
 
 ithohwtime1	res 1
 ithohwtime2 res	1
@@ -3280,30 +3285,113 @@ MessageID126	btfss	MsgResponse	;Only interested in requests
 		bsf	TStatISense	;At least 30 and 32 are iSenses
 		return
 
-VendorMessageID130	;goto	WordResponse	;TODO: ID 130
-		call   			IhwModeToBoiler
-		call			IhwModeToThermostat    
+; MessageID130 is used to set the DHW mode on the boiler.
+; [Normal read contition]:
+;   When Thermostat sends 'T: Read-Data' Boiler should respond with 'B: Read-Ack'
+; [Override read condition] (x = don't care):
+;   [HW block]:
+;     When SetIHWMode command block ('B') is called OTGW should send:
+;  	    T: 0b xxxx 0100 0000 xxxx -> Block-bit set
+;       B: 0b xxxx 0100 0100 xxxx -> Block-bit ack + block active
+;   [HW standby]:
+;     When SetIHWMode command standby ('S') is called OTGW should send:
+;       T: 0b xxxx 1000 0000 xxxx -> Standby-bit set
+;       B: 0b xxxx 1000 1000 xxxx -> Standby-bit ack + standby active
+;   [HW cycle]:
+;     When SetIHWMode command cycle ('C') is called OTGW should send:
+;       T: 0b xxxx 0001 0000 xxxx -> Boost-bit set
+;       B: 0b xxxx 0001 0001 xxxx -> Boost-bit ack + boost active
+;       ... -> time passes
+;       T: 0b xxxx 0001 0000 xxxx -> Boost-bit set
+;       B: 0b xxxx 0001 0000 xxxx -> Boost-bit ack + boost inactive
+;       T: 0b xxxx 0000 0000 xxxx -> Boost-bit clear
+;       B: 0b xxxx 0000 0000 xxxx -> Boost-bit clear ack
+VendorMessageID130
+        movfw        	ithohwmode1             ;Are we in control?
+        andlw           0x0F
+		skpnz
+        return
+        call            IhwModeToBoiler         ;Yes
+        call            IhwModeToThermostat    
 		return    
 
 IhwModeToBoiler
-		btfsc           MsgResponse		 ;Only interested in requests
+        btfsc           MsgResponse             ;Only interested in requests
 		return
-		movfw		    ithohwmode1		 ;MSB
-		call		    setbyte3
-		;movfw		    ithohwmode2		 ;LSB (0x00)
-		movlw		    0x00
-		call		    setbyte4
+        movfw           ithohwmode1             ;Override thermostat Read-Data (lower nibble)
+        andlw           0x0F
+        call            setbyte3
+        movlw           0x00
+        call            setbyte4
 		return
 
 IhwModeToThermostat
 		btfss           MsgResponse             ;Only interested in responses
         return
-        btfss           BoilerResponse          ;Only interested in boiler responses
-        return
-		movfw           ithohwmode1             ;MSB
+        btfsc           BoilerResponse          ;Only interested in boiler responses
+        goto            IhwModePatch            ;Execute workaround to override boiler Read-Ack response
+        call            IhwModeActivated        ;Memorize bits that are activated by the boiler
+        call            IhwModeHandleCycleDone  ;Clear cycle bit after procedure is done
+        movlw           B_RACK                  ;Fix IhwModePatch that causes B_UNK response to a valid Read-Ack
+        call            setbyte1
+        movfw           ithohwmode1             ;Overwrite boiler Read-Ack (lower nibble)
+        andlw           0x0F
 		call            setbyte3
 		return
 
+IhwModePatch                                    ;Workaround (triggers another TreatMessage)
+        bcf             OverrideUsed            ;Clear override flag
+        movfw           byte3
+        movwf           databyte1               ;Store data byte #1
+        movfw           byte4
+        movwf           databyte2               ;Store data byte #2
+        return
+
+IhwModeActivated                                ;Memorize bits that are activated by the boiler
+        btfsc           IhwCommandCycle
+        call            IhwModeHandleCycle
+        btfsc           IhwCommandBlock
+        call            IhwModeHandleBlock
+        btfsc           IhwCommandStandby
+        call            IhwModeHandleStandby
+        return
+
+IhwModeHandleCycle                              ;Check activation (IhwCommandCycle) clear flag handled in IhwModeHandleCycleDone
+        movfw           databyte2               
+        andlw           0x10
+        skpnz
+        return
+        bsf             IhwCommandCycleActiated
+        return
+
+IhwModeHandleBlock                              ;Check activation (IhwCommandBlock)
+        bcf             IhwCommandBlockActiated
+        movfw           databyte2
+        andlw           0x40
+        skpnz
+        return
+        bsf             IhwCommandBlockActiated
+        return
+
+IhwModeHandleStandby                            ;Check activation (IhwCommandStandby)
+        bcf             IhwCommandStandbyActiated
+        movfw           databyte2
+        andlw           0x80
+        skpnz
+        return
+        bsf             IhwCommandStandbyActiated
+        return
+
+IhwModeHandleCycleDone                          ;Check de-activation (IhwCommandCycle)
+        btfss        	IhwCommandCycleActiated
+        return
+        movfw        	databyte2
+        andlw        	0x10
+        skpz
+        return
+        bcf             IhwCommandCycle
+        bcf             IhwCommandCycleActiated
+        return
 
 ; MessageID133 is used to set the DHW time on the boiler used in ECO mode.
 ; Patch Thermostat Read-Data to Write-Data with custom timestamp and send this to the boiler.
