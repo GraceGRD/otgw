@@ -49,32 +49,63 @@ jobs:
       - name: Run test suite
         run: make test
 
+      - name: Rename firmware to tag or commit hash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG=${{ github.ref_name }} # Get the tag name
+          else
+            TAG=$(echo "${{ github.sha }}" | cut -c1-7) # Use the short commit hash
+          fi
+
+          mv gateway.hex gateway-${TAG}.hex
+          mv gateway.cod gateway-${TAG}.cod
+          mv gateway.lst gateway-${TAG}.lst
+          mv gateway.map gateway-${TAG}.map
+          mv diagnose.hex diagnose-${TAG}.hex
+          mv diagnose.cod diagnose-${TAG}.cod
+          mv diagnose.lst diagnose-${TAG}.lst
+          mv diagnose.map diagnose-${TAG}.map
+          mv interface.hex interface-${TAG}.hex
+          mv interface.cod interface-${TAG}.cod
+          mv interface.lst interface-${TAG}.lst
+          mv interface.map interface-${TAG}.map
+
       - name: Upload gateway firmware
         uses: actions/upload-artifact@v4
         with:
-          name: gateway
+          name: gateway-${TAG}
           path: |
-            gateway.hex
-            gateway.cod
-            gateway.lst
-            gateway.map
+            gateway*.hex
+            gateway*.cod
+            gateway*.lst
+            gateway*.map
 
       - name: Upload diagnose firmware
         uses: actions/upload-artifact@v4
         with:
-          name: diagnose
+          name: diagnose-${TAG}
           path: |
-            diagnose.hex
-            diagnose.cod
-            diagnose.lst
-            diagnose.map
+            diagnose*.hex
+            diagnose*.cod
+            diagnose*.lst
+            diagnose*.map
 
       - name: Upload interface firmware
         uses: actions/upload-artifact@v4
         with:
-          name: interface
+          name: interface-${TAG}
           path: |
-            interface.hex
-            interface.cod
-            interface.lst
-            interface.map
+            interface*.hex
+            interface*.cod
+            interface*.lst
+            interface*.map
+
+      - name: release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            gateway*.hex
+            diagnose*.hex
+            interface*.hex
+          token: ${{ secrets.GITHUB_TOKEN }}
