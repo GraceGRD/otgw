@@ -28,6 +28,8 @@ Some functionality to control the heatpump is already supported by the OTGW here
 This commands modifies setting `Setpoint DHW daily_MFT LT (°C)` and has a range between 50 and 65 °C (verified using [ithowifi]).
 
 ## Installation:
+1. Download the latest gateway.hex file from the [releases](https://github.com/GraceGRD/otgw/releases) page.
+2. Flash the firmware using [otmonitor](https://otgw.tclcode.com/otmonitor.html#upgrade).
 
 ## Message ID 130 (DHW control):
 The thermostat can control the boiler through Message ID 130, which represent Domestic Hot Water (DHW) comfort used exclusively in **Boost**, **Off** and **Stand-by** modes. 
