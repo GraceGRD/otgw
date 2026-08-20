@@ -116,6 +116,47 @@ Examples:
             0b           0000 1001  -> Minutes (9)
 ```
 
+## Message ID 134 (TBD)
+
+## Message ID 135 (TBD)
+
+## Message ID 141 (WIP ?Thermostat heating/cooling/dhw icons?)
+Decoding  of this message id is still work-in-progress.
+```
+Cooling -> 0x0108   0b 0000 0001 0000 1000
+Boiler  -> 0x0104   0b 0000 0001 0000 0100 after boiler boost button pressed
+Boiler  -> 0x012c   0b 0000 0001 0010 1100 during boiler seq
+Boiler  -> 0x0008   0b 0000 0000 0000 1000 seq done, cooling again
+Cooling -> 0x0000   0b 0000 0000 0000 0000 decreased setpoint cooling icon went off
+Cooling -> 0x0008   0b 0000 0000 0000 1000 increased setpoint cooling icon went on
+                    0b         1           -> DHW temp low / DHW disabled (after ECO mode has passed and temp is low)     (assumed)
+                    0b             1       -> DHW Active        (partially-confirmed / similar to bit 4)
+                    0b                1    -> Cooling Active    (confirmed)
+                    0b                 1   -> DHW Active        (partially-confirmed)
+```
+
+## Message ID 142 (Min room temp thermostat (°C))
+Represents WPU setting `Min room temp thermostat (°C)`.
+
+## Message ID 143 (Max room temp thermostat (°C))
+Represents WPU setting `Max room temp thermostat (°C)`.
+
+## Message ID 146 (Offset cooling (K))
+Represents WPU setting `Offset cooling (K)`.
+
+## Message ID 151 (Blocking time heating to cooling (uur))
+Represents WPU setting `Blocking time heating to cooling (uur)`.
+
+## Message ID 154 (Differential for free cooling mode (K))
+Represents WPU setting `Differential for free cooling mode (K)`.
+
+## Message ID 159 (Blocking time cooling to heating (uur))
+Represents WPU setting `Blocking time cooling to heating (uur)`.
+
+## Message ID 160 (Minimum outside temp cooling (°C))
+Represents WPU setting `Minimum outside temp cooling (°C)`.
+
+
 ## TODO:
 
 - Figure out how to control heatpump heating/cooling
