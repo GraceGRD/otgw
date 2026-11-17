@@ -3,9 +3,9 @@
 
 ;Copyright (c) 2022 - Schelte Bron
 
-#define		version		"6.5"
+#define		version		"6.8"
 #define		phase		"."	;a=alpha, b=beta, .=production
-#define 	patch		"4"	;Comment out when not applicable
+;#define	patch		"8"	;Comment out when not applicable
 ;#define	bugfix		"1"	;Comment out when not applicable
 #include	build.asm
 
@@ -384,7 +384,10 @@ minutetimer	res	1
 #define		Expired		minutetimer,7
 fakesetpoint1	res	1
 fakesetpoint2	res	1
-#define         NoFakeSetpoint	fakesetpoint1,7
+#define		NoFakeSetpoint	fakesetpoint1,7
+fakeroomtemp1	res	1
+fakeroomtemp2	res	1
+#define		NoFakeRoomTemp	fakeroomtemp1,7
 SecCounter	res	1
 MessagePtr	res	1
 RemOverrideFunc	res	1
@@ -442,12 +445,12 @@ tstatflags	res	1	;Used in- and outside interrupt routine
 #define		PowerReport	tstatflags,7
 
 override	res	1
-#define		OverrideBlink	override,7	;Keep track of blinking LED
+#define		OverrideAct	override,7	;Override activity has happened
 #define		OverrideWait	override,6	;Override has not yet been sent
 #define		OverrideFunc	override,5	;ID100 has not yet been sent
 #define		OverrideClr	override,4	;Cancel override request
 #define		OverrideReq	override,3	;Override temp was requested
-#define		OverrideAct	override,2	;Override accepted by thermostat
+#define		OverrideSet	override,2	;Override accepted by thermostat
 ;Bits 0&1 are used as a counter to allow 3 attempts for the override to stick
 
 initflags	res	1
@@ -469,7 +472,7 @@ onoffflags	res	1			;General bit flags
 #define		ExternalSensor	onoffflags,4	;External sensor configured
 #define		SendUserMessage	onoffflags,5	;User message in standalone mode
 #define		PriorityMsg	onoffflags,6
-#define		OneSecond	onoffflags,7	;Time to send the next message
+#define		MsgTrigger	onoffflags,7	;Time to send the next message
 ;When the thermostat is reconnected, the NoThermostat, HeatDemand, and
 ;SendUserMessage bits must be cleared
 		constant	CONNECTMASK=b'11010011'
@@ -532,10 +535,13 @@ conf		res	1			;Saved in EEPROM
 #define		SummerMode	conf,3
 #define		HotWaterSwitch	conf,4
 #define		HotWaterEnable	conf,5
+#define		NoFailSafe	conf,6	;No fall back to fail safe mode
 
-;The ds1820 package also uses 2 bytes in bank 0:
+;The ds1820 package also uses 4 bytes in bank 0:
 ;sensorstage	res	1
 ;lsbstorage	res	1
+;msbstorage	res	1
+;crc		res	1
 
 		global	float1, float2, flags, temp, StoreTempValue
 
@@ -607,6 +613,10 @@ txbuffer	res	TXBUFSIZE
 
 #define		SlaveMask	b'00001000'
 #define		MasterMask	b'00010000'
+
+Bank8data	UDATA
+MsgInterval	res	1
+IntervalCounter	res	1
 
 package		macro	pkg
 pkg		code
@@ -1073,8 +1083,10 @@ Start
 		clrw
 		swapf	WREG,W
 		movwf	mode
+		bsf	FailSafeMode	;Assume fail safe mode
 		btfss	STATUS,NOT_TO
-		bsf	FailSafeMode
+		btfss	NoFailSafe	;Fail safe mode is disabled by user
+		bcf	FailSafeMode	;Clear fail safe mode
 		movlw	b'1111'
 		movwf	PCON
 
@@ -1236,8 +1248,18 @@ WaitConvert	btfsc	ADCON0,GO	;Check that A/D conversion is finished
 		btfss	FailSafeMode
 		bsf	RCSTA,CREN	;Enable serial receive
 
-		;Configure timer 4
-		banksel	T4CON		;Bank 8
+		movlw	MessageInterval
+		call	ReadEpromData
+
+		;Configure timer 6, interrupt every 5 ms when running
+		banksel	T6CON		;Bank 8
+		movwf	MsgInterval
+		movlw	249		;Reset every 250 counts
+		movwf	PR6
+		movlw	b'0100001'	;1:4 prescaler, 1:5 postscaler, off
+		movwf	T6CON
+
+		;Configure timer 4, interrupt every 20 ms
 		movlw	249		;Reset every 250 counts
 		movwf	PR4
 		movlw	b'0100110'	;1:16 prescaler, 1:5 postscaler
@@ -1279,6 +1301,7 @@ WaitConvert	btfsc	ADCON0,GO	;Check that A/D conversion is finished
 		bsf	SysCoolLevel	;No user defined cooling level
 		bsf	SysCH2Setpoint	;No user defined CH2 control setpoint
 		bsf	NoFakeSetpoint	;Don't send fake setpoint to boiler
+		bsf	NoFakeRoomTemp	;Don't send fake room temp to boiler
 		bsf	InvalidTime	;No user specified time information
 
 		movlw	ONESEC
@@ -1381,6 +1404,9 @@ MainLoop	clrwdt
 
 		btfsc	PIR3,TMR4IF
 		call	TickTimer
+
+		btfsc	PIR3,TMR6IF
+		call	MessageTimer
 
 		btfsc	PIR1,ADIF
 		call	CheckThermostat
@@ -1546,15 +1572,24 @@ TickTimer	bcf	PIR3,TMR4IF	;Clear Timer 4 overflow flag
 		return
 		btfsc	BoilerAlive	;Ever received a message from boiler?
 		incf	repeatcount,F	;Keep track of repeated messages
-		bsf	OneSecond	;Trigger new message in stand-alone mode
-		movlw	ONESEC
-		movwf	SecCounter	;Reload second counter
 		incfsz	boilercom,W	;Increment variable without rolling over
 		movwf	boilercom
 		movlw	5
 		subwf	boilercom,W	;Check for 5 seconds without a message
 		skpnc
 		bcf	SlaveOut	;Prevent unwanted heating
+TriggerMessage	bsf	MsgTrigger	;Trigger new message in stand-alone mode
+		movlw	ONESEC
+		movwf	SecCounter	;Reload second counter
+		return
+
+;MessageTimer is called whenever timer 6 overflows (every 5 ms)
+MessageTimer	bcf	PIR3,TMR6IF	;Clear Timer 6 overflow flag
+		banksel	T6CON		;Bank 8
+		decf	IntervalCounter,F
+		movlb	0		;Bank 0
+		skpnz
+		bra	TriggerMessage
 		return
 
 ; IdleTimer is called whenever timer 0 overflows
@@ -1594,14 +1629,11 @@ FlashTimer	bcf	PIR1,TMR1IF	;Clear timer overrun flag
 		btfss	Expired
 		call	CommandExpiry
 		btfsc	OverrideReq
-		btfsc	OverrideAct
+		btfsc	OverrideSet
 		return			;No override request pending
 		;Override requested, but not active. Flash the override LED
-		movlw	1 << 7		;Mask for the OverrideBlink bit
-		xorwf	override,F
-		andwf	override,W
 		movlw	'O'
-		pcall	SwitchLED
+		pcall	ToggleLED
 		return
 
 CommandExpiry	decf	minutetimer,F	;Count down the expiry timer
@@ -1779,9 +1811,9 @@ Unstable
 		btfss	NoThermostat
 		return
 ThermostatEnd	btfss	MonitorMode	;Can't send messages in monitor mode
-		btfss	OneSecond	;Time to send the next message?
+		btfss	MsgTrigger	;Time to send the next message?
 		return
-		movlw	T_READ
+StandAloneMsg	movlw	T_READ
 		movwf	byte1
 		clrf	byte3
 		clrf	byte4
@@ -1796,7 +1828,10 @@ ThermostatEnd	btfss	MonitorMode	;Can't send messages in monitor mode
 		call	StoreValue	;... store the value we're sending
 		movfw	byte2
 		movwf	originalreq
-		bcf	OneSecond	;Message prepared - clear trigger
+		banksel	T6CON		;Bank 8
+		bcf	T6CON,TMR6ON	;Prevent further triggers
+		movlb	0		;Bank 0
+		bcf	MsgTrigger	;Message prepared - clear trigger
 		;Need lgoto because PCLATH points to the Message package
 		lgoto	SendMessage	;Start sending the message
 
@@ -2147,7 +2182,7 @@ PrintTable	retlw	PrintSettingA	;PR=A
 		retlw	PrintSettingC	;PR=C
 		goto	PrintSettingD	;PR=D
 		goto	PrintSettingE	;PR=E
-		retlw	BadValue	;PR=F
+		goto	PrintSettingF	;PR=F
 		goto	PrintSettingG	;PR=G
 		retlw	BadValue	;PR=H
 		goto	PrintSettingI	;PR=I
@@ -2155,7 +2190,7 @@ PrintTable	retlw	PrintSettingA	;PR=A
 		retlw	BadValue	;PR=K
 		retlw	PrintSettingL	;PR=L
 		goto	PrintSettingM	;PR=M
-		retlw	BadValue	;PR=N
+		goto	PrintSettingN	;PR=N
 		goto	PrintSettingO	;PR=O
 		goto	PrintSettingP	;PR=P
 		goto	PrintSettingQ	;PR=Q
@@ -2197,7 +2232,7 @@ PrintOvrSetPt	swapf	RemOverrideFunc,W ;Get the current bits in lower nibble
 		movlw	'T'
 		btfss	ProgChangePrio	;Either pending or current state
 		movlw	'C'
-		btfss	OverrideAct	;Override accepted by the thermostat?
+		btfss	OverrideSet	;Override accepted by the thermostat?
 		iorlw	0x20		;Switch to lowercase
 		call	PrintChar	;Print the override type
 		movfw	setpoint1	;Copy the setpoint
@@ -2210,6 +2245,18 @@ PrintSettingM	call	PrintSettingID
 PrintGateway	movlw	'G'
 		btfsc	MonitorMode
 		movlw	'M'
+		goto	PrintChar
+
+PrintSettingN	call	PrintSettingID
+		banksel	MsgInterval	;Bank 8
+		movfw	MsgInterval
+		movlb	0		;Bank 0
+PrintInterval	movwf	temp2
+		lsrf	temp2,W
+		call	PrintByte
+		movlw	'0'
+		btfsc	temp2,0
+		movlw	'5'
 		goto	PrintChar
 
 PrintSettingQ	call	PrintSettingID
@@ -2291,6 +2338,25 @@ PrintSettingE	call	PrintSettingID
 		btfsc	TempSensorFunc	;Sensor configured for outside temp
 		movlw	16		;Index for returnwater in valuestorage
 		goto	PrintIndexed
+
+PrintSettingF	call	PrintSettingID
+		banksel	EEADRL		;Bank 3
+		movlw	low 0x8008	;Configuration word 2
+		movwf	EEADRL
+		clrf	EEADRH
+		bsf	EECON1,CFGS	;Select config space
+		bcf	INTCON,GIE
+		bsf	EECON1,RD
+		nop
+		nop
+		bsf	INTCON,GIE
+		movfw	EEDATH
+		bcf	EECON1,CFGS	;Deselect config space
+		movlb	0		;Bank 0
+		andlw	1 << 5		;LVP bit
+		skpz
+		movlw	1		;LVP is enabled
+		goto	PrintDigit
 
 PrintSummary	movfw	rxpointer
 		sublw	4
@@ -2381,6 +2447,7 @@ StoreDataBytes	movfw	byte3
 ;Vendor specific ID's can go through the code below without causing any trouble
 ;because the mask returned by UnknownMask will be 0.
 HandleResponse	bsf	BoilerAlive	;Received a message from the boiler
+		call	StartInterval	;Start the message interval timer
 		movfw	byte2
 		xorwf	prioritymsgid,W	;Response matches ID of priority msg?
 		skpnz
@@ -2460,6 +2527,14 @@ RemoteCommand	call	TreatMessage	;Process the received message
 		bcf	Unsolicited
 		goto	SetParity
 
+StartInterval	banksel	T6CON		;Bank 8
+		movfw	MsgInterval
+		movwf	IntervalCounter
+		clrf	TMR6
+		bsf	T6CON,TMR6ON
+		movlb	0		;Bank 0
+		return
+
 ;Define special treatment based on the message ID. This code will be called in
 ;three situations:
 ;1. A request was received from the thermostat.
@@ -2503,7 +2578,7 @@ messagetable	goto	MessageID0	;Data ID 0
 		goto	WordResponse	;Data ID 21
 		goto	WordResponse	;Data ID 22
 		goto	WordResponse	;Data ID 23
-		goto	WordResponse	;Data ID 24
+		goto	MessageID24	;Data ID 24
 		goto	MandatoryWord	;Data ID 25
 		goto	WordResponse	;Data ID 26
 		goto	MessageID27	;Data ID 27
@@ -2608,6 +2683,10 @@ messagetable	goto	MessageID0	;Data ID 0
 		goto	MessageID126	;Data ID 126
 		goto	WordResponse	;Data ID 127
 
+messagewrite	btfss	AlternativeUsed
+		retlw	0
+		movlw	T_WRITE
+		bra	setbyte1
 messageinv	movlw	B_INV
 		bra	setbyte1
 messageack	movfw	originaltype	;Get original request type
@@ -2898,11 +2977,13 @@ MsgID9Change	call	messageack	;Turn request into acknowledgement
 		btfss	OverrideClr
 		movfw	setpoint2
 		call	setbyte4	;Data byte 2 has the fraction
+		btfsc	OverrideWait
+		bsf	OverrideAct
 		bcf	OverrideWait	;Override has been requested
 		btfsc	TStatCelcia	;Remeha Celcia thermostat?
 		btfss	OverrideReq	;And override requested?
 		return
-		btfss	OverrideAct	;And override not yet active?
+		btfss	OverrideSet	;And override not yet active?
 		bsf	Unsolicited	;Then resend the request on next msg
 		return
 
@@ -2958,10 +3039,9 @@ MessageID16	btfsc	MsgResponse
 		bra	roomsetptdiff	;Values differ more than 0.125 degrees
 		;Setpoint matches the request
 		call	roomsetptchange
-		btfsc	OverrideAct
+		btfsc	OverrideSet
 		return			;Override remains in effect
-		bsf	OverrideAct	;Override was picked up by thermostat
-		bcf	OverrideBlink
+		bsf	OverrideSet	;Override was picked up by thermostat
 		movlw	'O'
 		goto	SwitchOnLED	;Switch on the override LED
 roomsetptclear	bcf	OverrideClr	;Override clear data has been sent
@@ -2975,10 +3055,11 @@ roomsetptchange	btfsc	NoFakeSetpoint
 		movfw	fakesetpoint1
 		call	setbyte3
 		movfw	fakesetpoint2
-		goto	setbyte4
-roomsetptdiff	btfss	OverrideAct	;Override currently active?
+		call	setbyte4
+		goto	messagewrite
+roomsetptdiff	btfss	OverrideSet	;Override currently active?
 		incf	override,F	;Make 3 attempts to set the override
-		btfss	OverrideAct	;Time to abandon override?
+		btfss	OverrideSet	;Time to abandon override?
 		bra	roomsetptchange
 roomsetptcancel	btfsc	TStatISense	;Special treatment for iSense thermostat
 		bra	roomsetptreset
@@ -2999,6 +3080,18 @@ MessageID20	btfss	MsgResponse
 		call	setbyte3
 		movfw	clock2
 		goto	setbyte4
+
+;Send a user specified room temperature to the boiler
+;Some heat pumps implement their own control mechanism based on room setpoint
+;and temperature, rather than the control setpoint
+MessageID24	btfss	MsgResponse
+		btfsc	NoFakeRoomTemp
+		goto	WordResponse
+		movfw	fakeroomtemp1
+		call	setbyte3
+		movfw	fakeroomtemp2
+		call	setbyte4
+		goto	messagewrite
 
 ;Return the outside temperature, if specified via the serial interface
 MessageID27	btfsc	ExternalSensor	;Not using an external sensor
@@ -3263,9 +3356,16 @@ MessageID125	btfss	MsgResponse
 		btfsc	MsgUnknown	;Did the boiler return a version?
 		call	messageack	;Turn request into acknowledgement W=0
 		addlw	-3		;Compare against minimum version
-		skpnc			;Boiler version below 3.0
+		skpc			;Boiler version 3.0 or above
+		bra	RaiseOTVersion
+		addlw	-2		;OTGW does not support OT v5.0
+		skpc			;Bolier version 5.0 or above
 		return			;Keep using the boiler response
-		movlw	3
+LowerOTVersion	movlw	4
+		call	setbyte3	;Major version number
+		movlw	51
+		goto	setbyte4	;Minor version number
+RaiseOTVersion	movlw	3
 		call	setbyte3	;Major version number
 		goto	setbyte4	;Minor version number
 
@@ -3747,11 +3847,10 @@ ClearByteResp	clrf	databyte2
 ;************************************************************************
 
 SwitchLED	skpnz			;Zero bit indicates LED state
-		goto	SwitchOffLED
-
+		bra	SwitchOffLED
 SwitchOnLED	addlw	functions - 'A'	;Point into the table of functions
 		movwf	FSR0L		;Setup indirect addressing
-		bsf	INDF0,0		;Remember that this function is on
+DoSwitchOnLED	bsf	INDF0,0		;Remember that this function is on
 		movlw	b'11111110'	;Mask off the state bit
 		andwf	INDF0,W		;Get the LED(s) for the function
 		skpnz
@@ -3764,7 +3863,7 @@ SwitchOnLED	addlw	functions - 'A'	;Point into the table of functions
 
 SwitchOffLED	addlw	functions - 'A'	;Point into the table of functions
 		movwf	FSR0L		;Setup indirect addressing
-		bcf	INDF0,0		;Remember that this function is off
+DoSwitchOffLED	bcf	INDF0,0		;Remember that this function is off
 		movfw	INDF0		;Get the LED for the function
 		skpnz
 		retlw	'B'		;No LED is assigned to this function
@@ -3772,6 +3871,12 @@ SwitchOffLED	addlw	functions - 'A'	;Point into the table of functions
 		andlw	b'110'
 		iorwf	gpioflags,F	;Switch off virtual LEDs E/F
 		retlw	'B'		;Save some movlw 'B' instructions
+
+ToggleLED	addlw	functions - 'A' ;Point into the table of functions
+		movwf	FSR0L		;Setup indirect addressing
+		btfss	INDF0,0
+		bra	DoSwitchOnLED
+		bra	DoSwitchOffLED
 
 ;************************************************************************
 ; Parse commands received on the serial interface
@@ -3814,9 +3919,9 @@ SerialCmdTable	goto	SerialCmd00	; AA, MM, RR, TT commands
 		goto	SerialCmd01	; RS, SR commands
 		goto	SerialCmd02	; PR, KI commands
 		goto	SerialCmd03	; PS command
-		goto	SerialCmd04	; SW, TP, VR commands
+		goto	SerialCmd04	; MI, SW, TP, VR commands
 		goto	SerialCmd05	; DA, GB, MH, VS commands
-		goto	SerialCmd06	; CE, GA commands
+		goto	SerialCmd06	; CE, GA, RT commands
 		goto	SerialCmd07	; OH, TS commands
 		goto	SerialCmdLED	; LD command
 		goto	SerialCmdLED	; LE command
@@ -3835,7 +3940,7 @@ SerialCmdTable	goto	SerialCmd00	; AA, MM, RR, TT commands
 		goto	$		; WD command
 #endif
 		goto	SerialCmd14	; DP command
-		goto	SerialCmd15	; BW command
+		goto	SerialCmd15	; BW, FS command
 		retlw	CommandNG
 		goto	SerialCmd17	; TC command
 		goto	SerialCmd18 ; QI command (Itho-wpu5g-DHW-Time)
@@ -3899,6 +4004,9 @@ SerialCmd04	movfw	INDF1
 		xorlw	'S' ^ 'T'
 		skpnz
 		goto	SlaveParameter
+		xorlw	'T' ^ 'M'
+		skpnz
+		goto	SetInterval
 		retlw	CommandNG
 
 SerialCmd05	movfw	INDF1
@@ -3917,6 +4025,9 @@ SerialCmd06	movfw	INDF1
 		xorlw	'C'
 		skpnz
 		goto	SetCoolEnable
+		xorlw	'C' ^ 'R'
+		skpnz
+		goto	SetRoomTemp
 		goto	SerialCmdGPIO
 
 SerialCmd07	movfw	INDF1
@@ -3924,6 +4035,7 @@ SerialCmd07	movfw	INDF1
 		skpnz
 		goto	SetOverrideHigh
 		xorlw	'O' ^ 'T'
+		skpnz
 		goto	SetSensorFunc
 		retlw	CommandNG
 
@@ -3978,7 +4090,10 @@ SerialCmd14	movfw	INDF1
 SerialCmd15	movfw	INDF1
 		xorlw	'B'
 		skpnz
-		goto 	SetDHWBlock
+		goto	SetDHWBlock
+		xorlw	'B' ^ 'F'
+		skpnz
+		goto	SetFailSafety
 		retlw	CommandNG
 
 SerialCmd17	movfw	INDF1
@@ -4032,7 +4147,7 @@ SerialCmd1D	movfw	INDF1
 SerialCmd1E	movfw	INDF1
 		xorlw	'S'
 		skpnz
-		goto 	SetSummerMode
+		goto	SetSummerMode
 		retlw	CommandNG
 
 SerialCmd1F	movfw	INDF1
@@ -4113,7 +4228,7 @@ SerialCmdGPIO	movfw	INDF1
 		movlw	rxbuffer + 1
 		movwf	FSR1L		;Point to the GPIO port letter
 		movlw	b'11110000'	;Mask to clear old GPIO A function
-		btfsc   INDF1,0		;Configuring GPIO B?
+		btfsc	INDF1,0		;Configuring GPIO B?
 		bra	SetGPIOFunction
 		swapf	temp,F		;Move new function code to upper nibble
 		movlw	b'1111'		;Mask to clear old GPIO B function
@@ -4176,7 +4291,8 @@ SetSetPoint	xorwf	RemOverrideFunc,W ;Store function bits in lower nibble
 		skpz			;There is no old setpoint
 		bsf	OverrideClr	;Clear old setpoint before setting new
 		movlw	1 << 4		;Leave OverrideClr bit intact
-SetSetPointJ1	andwf	override,F	;Clear old state information
+SetSetPointJ1	iorlw	1 << 7		;Keep the OverrideAct bit
+		andwf	override,F	;Clear old state information
 		movfw	float2		;Copy the value to the setpoint vars
 		movwf	setpoint2
 		movfw	float1
@@ -4212,9 +4328,15 @@ CelciaValue	movfw	setpoint1
 		movfw	setpoint2
 		movwf	float2
 		return
-ClearSetPoint	bsf	OverrideClr	;Override request to be cancelled
+ClearSetPoint	btfss	OverrideAct
+		bra	CancelSetPoint
+		bsf	OverrideClr	;Override request to be cancelled
 		bcf	ManChangePrio
 		bcf	ProgChangePrio
+		return
+CancelSetPoint	clrf	override
+		movlw	'O'
+		pcall	SwitchOffLED
 		return
 
 SetSetBack	call	GetPosFloatArg	;Parse floating point value
@@ -4362,6 +4484,17 @@ SetFakeSetpoint	call	GetPercentArg	;Get the fake setpoint
 		bsf	NoFakeSetpoint
 		goto	CommandFloat
 
+SetRoomTemp	call	GetPercentArg
+		skpnc
+		return
+		movwf	fakeroomtemp1
+		movfw	float2
+		movwf	fakeroomtemp2
+		iorwf	float1,W
+		skpnz
+		bsf	NoFakeRoomTemp
+		goto	CommandFloat
+
 SetDebugPtr	call	CmdArgPointer
 		movfw	rxpointer
 		sublw	5		;Check for 2-digit address
@@ -4449,8 +4582,8 @@ SetHotWater	movfw	rxpointer
 		sublw	'P'
 		skpnz
 		bra	SetHotWaterPush
-		clrf    dhwpushflags    ;Abort any manual DHW push
-		bcf     manualdhwpush
+		clrf	dhwpushflags	;Abort any manual DHW push
+		bcf	manualdhwpush
 		bcf	HotWaterSwitch
 		bcf	HotWaterEnable
 		addlw	'1' - 'P'
@@ -4628,6 +4761,46 @@ SetDHWBlock	call	CheckBoolean
 		bsf	DHWBlocking
 		goto	GoPrintDigit
 
+SetInterval	decf	rxpointer,W	;Pointer to the last character
+		addwf	FSR1L,F
+		movfw	INDF1		;Get the last character
+		sublw	'9'
+		sublw	'9' - '0'	;Check that the character is a digit
+		skpc
+		retlw	SyntaxError
+		movwf	tempvar2	;Save for later use
+		clrf	INDF1		;Remove the last char from the command
+		call	CmdArgPointer
+		tstf	INDF1		;Check that there is anything left
+		skpnz
+		retlw	OutOfRange	;1 digit is definitely out of range
+		call	GetDecimal	;Get the value of the remaining chars
+		skpnc
+		return			;Return any error encountered
+		tstf	INDF1		;Check for end of command
+		skpz
+		retlw	SyntaxError
+		movwf	temp		;Save the original arg divided by 10
+		addwf	temp,F		;Double the value
+		skpnc
+		retlw	OutOfRange
+		btfsc	tempvar2,3	;Last digit was 8 or higher
+		incf	temp,F
+		movfw	tempvar2
+		sublw	2		;Last digit was higher than 2
+		skpc
+		incf	temp,F		;The original arg divided by 5 (rounded)
+		movlw	100 / 5		;Minimum interval is 100ms
+		subwf	temp,W
+		skpc
+		retlw	OutOfRange
+		movlw	MessageInterval
+		call	WriteEpromData	;Store new message interval in EEPROM
+		banksel	MsgInterval	;Bank 8
+		movwf	MsgInterval
+		movlb	0		;Bank 0
+		lgoto	PrintInterval
+		
 SaveConfig	movfw	conf
 		movwf	temp
 		movlw	Configuration
@@ -5372,6 +5545,15 @@ RemoteRequest	call	GetDecimalArg
 		bsf	initflags,INITRR
 		lgoto	PrintByte
 
+SetFailSafety	call	CheckBoolean
+		skpc
+		return
+		bcf	NoFailSafe
+		skpnz
+		bsf	NoFailSafe	;Inverse logic
+		call	SaveConfig
+		goto	PrintBufChar3
+
 ;************************************************************************
 ; Implement the GPIO port functions
 ;************************************************************************
@@ -5543,6 +5725,7 @@ TStatModel	de	0
 Configuration	de	0
 DHWSetting	de	0, 0	;Must immediately follow Configuration
 MaxCHSetting	de	0, 0	;Must immediately follow DHWSetting
+MessageInterval	de	200
 
 PrintSettingA	de	"A="
 GreetingStr	de	"OpenTherm Gateway ", version

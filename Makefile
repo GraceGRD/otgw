@@ -4,7 +4,7 @@ PIC = p16f1847
 SCRIPT = 16f1847.lkr
 PROJECT = gateway
 OTGWOBJECTS = gateway.o ds1820.o selfprog.o
-DIAGOBJECTS = diagnose.o selfprog.o
+DIAGOBJECTS = diagnose.o ds1820.o selfprog.o
 INTFOBJECTS = interface.o selfprog.o
 OUTPUT = $(PROJECT).hex
 COD = $(PROJECT).cod
@@ -39,5 +39,5 @@ clean:
 
 .PHONY: clean test
 
-# # Include a local make file, if it exists
+# Include a local make file, if it exists
 -include Makefile-local.mk
