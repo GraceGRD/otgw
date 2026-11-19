@@ -72,12 +72,18 @@ jobs:
         run: make test
 
       - name: Rename firmware to tag or commit hash
+        id: firmware-name
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            TAG=${{ github.ref_name }} # Get the tag name
+          if [[ "$REF_TYPE" == tag ]]; then
+            TAG="$REF_NAME" # Get the tag name
           else
-            TAG=$(echo "${{ github.sha }}" | cut -c1-7) # Use the short commit hash
+            TAG="${COMMIT_SHA:0:7}" # Use the short commit hash
           fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
           mv gateway.hex gateway-${TAG}.hex
           mv gateway.cod gateway-${TAG}.cod
@@ -95,7 +101,7 @@ jobs:
       - name: Upload gateway firmware
         uses: actions/upload-artifact@v7
         with:
-          name: gateway-${TAG}
+          name: gateway-${{ steps.firmware-name.outputs.tag }}
           path: |
             gateway*.hex
             gateway*.cod
@@ -105,7 +111,7 @@ jobs:
       - name: Upload diagnose firmware
         uses: actions/upload-artifact@v7
         with:
-          name: diagnose-${TAG}
+          name: diagnose-${{ steps.firmware-name.outputs.tag }}
           path: |
             diagnose*.hex
             diagnose*.cod
@@ -115,7 +121,7 @@ jobs:
       - name: Upload interface firmware
         uses: actions/upload-artifact@v7
         with:
-          name: interface-${TAG}
+          name: interface-${{ steps.firmware-name.outputs.tag }}
           path: |
             interface*.hex
             interface*.cod
