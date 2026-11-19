@@ -311,6 +311,9 @@ MONMODEBIT	equ	0	;Position of the bit returned by CheckBoolean
 #define		ChangeMode	mode,1
 #define		AlternativeUsed	mode,2		;Must be in shared RAM
 #define		FailSafeMode	mode,3		;Must be outside wiped RAM
+fakeroomtemp1	res	1
+fakeroomtemp2	res	1
+#define		NoFakeRoomTemp	fakeroomtemp1,7
 
 Bank0data	UDATA
 ;Variables for temporary storage
@@ -385,9 +388,6 @@ minutetimer	res	1
 fakesetpoint1	res	1
 fakesetpoint2	res	1
 #define		NoFakeSetpoint	fakesetpoint1,7
-fakeroomtemp1	res	1
-fakeroomtemp2	res	1
-#define		NoFakeRoomTemp	fakeroomtemp1,7
 SecCounter	res	1
 MessagePtr	res	1
 RemOverrideFunc	res	1
