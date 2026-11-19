@@ -1,0 +1,71 @@
+test "Itho DHW cycle handshake and override release"
+constraint p16f1847
+
+# Message ID 130 controls DHW Boost, Off and Stand-by modes.
+# Eco and Comfort modes are controlled separately via HW=state.
+# QH=C (DHW cycle) mimics the Spider Boost mode: a single DHW heating
+# cycle to approximately 62 C.
+# Data layout: xxxx tttt bbbb xxxx; tttt = thermostat control bits,
+# bbbb = boiler status bits. Boost uses 0001: 0x0100 control,
+# 0x0010 status. The outer nibbles are don't-care bits.
+
+load boiler-itho-wpu5g.stc
+load thermostat-itho-wpu5g.stc
+
+# With no QH override, Message ID 130 passes through unchanged.
+go 4000000
+check T.082.... T00820000
+check B.082.... B4082000D
+
+mark
+Serial.tx = "QH=C\r"
+go 8000000
+check {QH: \S+} {QH: C}
+check R.082.... R80820100
+check B.082.... B4082000D
+check A.082.... AC082010D
+
+# Echoing the Boost control bit with a clear status bit is not an
+# acknowledgement; the gateway keeps requesting the mode.
+
+mark
+Boiler.response = 0xC082010D
+go 12000000
+check R.082.... R80820100
+check B.082.... BC082010D
+check A.082.... AC082010D
+
+# The boiler acknowledges Boost by setting the matching status bit
+# alongside the thermostat control bit.
+
+mark
+Boiler.response = 0x4082011D
+go 16000000
+check R.082.... R80820100
+check B.082.... B4082011D
+check A.082.... A4082011D
+
+# While the boiler Boost status bit is set, the gateway keeps requesting
+# Boost across subsequent exchanges.
+
+mark
+go 20000000
+check R.082.... R80820100
+check B.082.... B4082011D
+check A.082.... A4082011D
+
+# After acknowledging Boost, the boiler clears its status bit when the
+# cycle is done (boiler off). The gateway then releases the one-shot override.
+
+mark
+Boiler.response = 0xC082010D
+go 24000000
+check R.082.... R80820100
+check B.082.... BC082010D
+check A.082.... A4082000D
+
+mark
+go 28000000
+check R.082.... {}
+check T.082.... T00820000
+check B.082.... BC082010D

@@ -1,0 +1,70 @@
+test "Itho DHW block handshake and override release"
+constraint p16f1847
+
+# Message ID 130 controls DHW Boost, Off and Stand-by modes.
+# Eco and Comfort modes are controlled separately via HW=state.
+# QH=B (DHW block) mimics the Spider Off mode: the boiler is disabled
+# entirely, including legionella prevention.
+# Data layout: xxxx tttt bbbb xxxx; tttt = thermostat control bits,
+# bbbb = boiler status bits. Off (block) uses 0100: 0x0400 control,
+# 0x0040 status. The outer nibbles are don't-care bits.
+
+load boiler-itho-wpu5g.stc
+load thermostat-itho-wpu5g.stc
+
+# With no QH override, Message ID 130 passes through unchanged.
+go 4000000
+check T.082.... T00820000
+check B.082.... B4082000D
+
+mark
+Serial.tx = "QH=B\r"
+go 8000000
+check {QH: \S+} {QH: B}
+check R.082.... R80820400
+check B.082.... B4082000D
+check A.082.... AC082040D
+
+# Echoing the Off (block) control bit with a clear status bit is not an
+# acknowledgement; the gateway keeps requesting the mode.
+
+mark
+Boiler.response = 0xC082040D
+go 12000000
+check R.082.... R80820400
+check B.082.... BC082040D
+check A.082.... AC082040D
+
+# The boiler acknowledges Off (block) by setting the matching status bit
+# alongside the thermostat control bit.
+
+mark
+Boiler.response = 0x4082044D
+go 16000000
+check R.082.... R80820400
+check B.082.... B4082044D
+check A.082.... A4082044D
+
+# Unlike the one-shot Boost cycle, Off (block) remains overridden even if
+# the boiler later clears its status bit.
+
+mark
+Boiler.response = 0xC082040D
+go 20000000
+check R.082.... R80820400
+check B.082.... BC082040D
+check A.082.... AC082040D
+
+# Any single-character QH argument other than C, B or S disables the
+# override and restores normal thermostat traffic.
+
+mark
+Serial.tx = "QH=X\r"
+go 24000000
+check {QH: \S+} {QH: 0}
+
+mark
+go 28000000
+check R.082.... {}
+check T.082.... T00820000
+check B.082.... BC082040D

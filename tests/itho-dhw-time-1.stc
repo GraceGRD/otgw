@@ -1,0 +1,119 @@
+test "Itho DHW time encoding and one-shot updates"
+constraint p16f1847
+
+# Message ID 133 stores the DHW time used exclusively in Eco mode.
+# QI=hh:mm sets this time through a Message ID 133 write request.
+# Encoding: 101 hhhhh mmmmmmmm; the upper three bits are observed as
+# fixed (their purpose is still unknown), followed by hours and minutes.
+
+load boiler-itho-wpu5g.stc
+# Poll the stored Eco-mode DHW time; test a thermostat write after QI updates.
+Thermostat.tx = 0x80000200
+Thermostat.tx = 0x80850000
+Thermostat.tx = 0x00820000
+
+go 4000000
+
+# QI replaces the next Message ID 133 request with a one-shot write,
+# then restores normal thermostat polling.
+# README example: 19:05 encodes as 0xB305 (101 10011 00000101).
+
+mark
+Serial.tx = "QI=19:05\r"
+go 8000000
+check {QI: \S+} {QI: 19:05}
+check R.085.... R9085B305
+check B.085.... B5085B305
+check A.085.... AC085B305
+
+mark
+go 12000000
+check R.085.... {}
+check T.085.... T80850000
+check B.085.... BC085B305
+
+# README example: 22:09 encodes as 0xB609 (101 10110 00001001).
+
+mark
+Serial.tx = "QI=22:09\r"
+go 16000000
+check {QI: \S+} {QI: 22:09}
+check R.085.... R9085B609
+check B.085.... B5085B609
+check A.085.... AC085B609
+
+mark
+go 20000000
+check R.085.... {}
+check T.085.... T80850000
+check B.085.... BC085B609
+
+# Lower valid time boundary: 00:00 encodes as 0xA000.
+
+mark
+Serial.tx = "QI=00:00\r"
+go 24000000
+check {QI: \S+} {QI: 00:00}
+check R.085.... R1085A000
+check B.085.... BD085A000
+check A.085.... A4085A000
+
+mark
+go 28000000
+check R.085.... {}
+check T.085.... T80850000
+check B.085.... B4085A000
+
+# Upper valid time boundary: 23:59 encodes as 0xB73B.
+
+mark
+Serial.tx = "QI=23:59\r"
+go 32000000
+check {QI: \S+} {QI: 23:59}
+check R.085.... R9085B73B
+check B.085.... B5085B73B
+check A.085.... AC085B73B
+
+mark
+go 36000000
+check R.085.... {}
+check T.085.... T80850000
+check B.085.... BC085B73B
+
+# QI expects hh:mm: hours 0-23, minutes 0-59, and a colon separator.
+# Out-of-range values return OR; a malformed separator returns SE.
+
+mark
+Serial.tx = "QI=24:00\r"
+go 40000000
+check R.085.... {}
+check {QI: \S+} {QI: OR}
+
+mark
+Serial.tx = "QI=12:60\r"
+go 44000000
+check R.085.... {}
+check {QI: \S+} {QI: OR}
+
+mark
+Serial.tx = "QI=12-30\r"
+go 48000000
+check R.085.... {}
+check {QI: \S+} {QI: SE}
+
+# As described for Message ID 133, the thermostat can also overwrite the
+# stored Eco-mode DHW time. Its later write is forwarded unchanged, and
+# subsequent polling returns the new value (19:05 / 0xB305).
+
+mark
+Thermostat.tx = 0x9085B305
+go 52000000
+check R.085.... {}
+check T9085B305 T9085B305
+check B5085B305 B5085B305
+
+mark
+go 56000000
+check R.085.... {}
+check T80850000 T80850000
+check BC085B305 BC085B305
