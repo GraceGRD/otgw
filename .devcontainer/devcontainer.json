@@ -1,0 +1,20 @@
+{
+  "name": "otgw-firmware",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "files.eol": "\n",
+        "terminal.integrated.defaultProfile.linux": "bash"
+      },
+      "extensions": [
+        "ms-vscode.makefile-tools",
+        "ms-vscode.cpptools"
+      ]
+    }
+  }
+}

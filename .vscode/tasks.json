@@ -1,0 +1,36 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "firmware: build",
+      "type": "shell",
+      "command": "make gateway.hex diagnose.hex interface.hex",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "firmware: gpsim validate",
+      "type": "shell",
+      "command": "bash ./tools/validate-gpsim.sh",
+      "options": {
+        "shell": {
+          "executable": "/bin/bash",
+          "args": [
+            "-lc"
+          ]
+        }
+      },
+      "group": "test"
+    },
+    {
+      "label": "firmware: build + validate",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "firmware: build",
+        "firmware: gpsim validate"
+      ]
+    }
+  ]
+}
